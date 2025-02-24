@@ -10,6 +10,10 @@ import numpy as np
 from PIL import Image
 from argparse import ArgumentParser
 
+import onnx
+import onnx.inliner
+from onnx import shape_inference
+
 sys.path.append('..')
 
 from inference.scene_seg_infer import SceneSegNetworkInfer
@@ -78,7 +82,16 @@ def main():
 
     # ONNX export
     onnx_program = torch.onnx.dynamo_export(model, image_tensor)
+
     onnx_program.save(args.output_onnx_trace_filepath)
+    onnx_model = onnx.load(args.output_onnx_trace_filepath)
+
+    # Inline any functions
+    onnx_model = shape_inference.infer_shapes(onnx_model)
+    onnx_model = onnx.inliner.inline_local_functions(onnx_model)
+
+    onnx.save(onnx_model, args.output_onnx_trace_filepath)
+
     print("INFO: ONNX Export file generated successfully.")
 
 if __name__ == '__main__':

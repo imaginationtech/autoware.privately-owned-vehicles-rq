@@ -26,8 +26,20 @@ DESC:   C++ Deployment of SceneSeg Network
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/dnn.hpp>
 
+#include <tvm/runtime/packed_func.h>
+#include <tvm/runtime/registry.h>
+#include <tvm/runtime/device_api.h>
+#include <tvm/runtime/ndarray.h>
+#include <tvm/runtime/module.h>
+#include <dmlc/memory_io.h>
+
 using namespace cv; 
 using namespace std; 
+
+namespace fs = std::filesystem;
+
+using namespace tvm;
+using namespace tvm::runtime;
 
 /*
 **
@@ -47,6 +59,72 @@ std::string print_tensor_shape(const std::vector<std::int64_t>& vTensorShape)
     stream << vTensorShape[vTensorShape.size() - 1];
     
     return stream.str();
+}
+
+// Function to load the network model, graph, and params
+static Module LoadNetwork(const std::string& lib_path, const std::string& json_file, const std::string& params_file,
+    DLDevice tvm_device) {
+    // Load the compiled TVM library
+    Module lib = Module::LoadFromFile(lib_path);
+
+    // Load computational graph (.json)
+    std::ifstream loaded_json(json_file, std::ios::in);
+    std::string json_data((std::istreambuf_iterator<char>(loaded_json)), std::istreambuf_iterator<char>());
+    loaded_json.close();
+
+    // Load params from file
+    std::ifstream loaded_params(params_file, std::ios::binary);
+    std::string params_data((std::istreambuf_iterator<char>(loaded_params)), std::istreambuf_iterator<char>());
+    loaded_params.close();
+    TVMByteArray params_arr;
+    params_arr.data = params_data.c_str();
+    params_arr.size = params_data.length();
+
+    // Get the Graph Executor
+    int device_type = tvm_device.device_type;
+    const PackedFunc *graph_executor_create = Registry::Get("tvm.graph_executor.create");
+    Module graph_module = (*graph_executor_create)(json_data, lib, device_type, tvm_device.device_id);
+
+    // Load params into the Graph Executor
+    PackedFunc load_params = graph_module.GetFunction("load_params");
+    load_params(params_arr);
+
+    // Count number of params
+    int num_params = 0;
+    dmlc::MemoryStringStream strm_obj(const_cast<std::string*>(&params_data));
+    dmlc::Stream *strm = &strm_obj;
+    uint64_t header, reserved;
+    ICHECK(strm->Read(&header)) << "Invalid parameters file format";
+    ICHECK(strm->Read(&reserved)) << "Invalid parameters file format";
+    std::vector<std::string> p_names;
+    ICHECK(strm->Read(&p_names)) << "Invalid parameters file format";
+    num_params = p_names.size();
+    std::cout << "Loaded " << num_params << " parameters\n";
+
+    return graph_module;
+}
+
+// Function to run the model and return the output NDArray
+std::vector<tvm::runtime::NDArray> RunNetwork(const std::string& net_name, Module& graph_module,
+                        const std::string& input_name, NDArray& input_array) {
+    // Set input
+    graph_module.GetFunction("set_input")(input_name, input_array);
+
+    // Run the model
+    graph_module.GetFunction("run")();
+
+    // Detect the number of outputs
+    int num_outputs = graph_module.GetFunction("get_num_outputs")();
+
+    // Collect all outputs
+    tvm::runtime::PackedFunc get_output = graph_module.GetFunction("get_output");
+    std::vector<tvm::runtime::NDArray> outputs;
+    for (int i = 0; i < num_outputs; ++i) {
+        outputs.push_back(get_output(i));
+    }
+
+    // Get the output
+    return outputs;
 }
 
 /*
@@ -98,7 +176,7 @@ int main(int argc, ORTCHAR_T* argv[])
     session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_DISABLE_ALL);
 
     // Use CUDA
-    if (true /* Use Cuda */)
+    if (false /* Use Cuda */)
     {
         cuda_options.device_id = 0;
         cuda_options.cudnn_conv_algo_search = OrtCudnnConvAlgoSearchExhaustive; // Algo to search for Cudnn
