@@ -48,6 +48,14 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(tvm-tools)
 
+# Add tvm-cpp-helper as a dependency. This is used to load and run the TVM models.
+FetchContent_Declare(
+  tvm-cpp-helper
+  GIT_REPOSITORY git@github.imgtec.org:robert-quill/tvm-cpp-helper.git
+  GIT_TAG        main
+)
+FetchContent_MakeAvailable(tvm-cpp-helper)
+
 function(compile_onnx_network input_file output_name extra_args)
     add_custom_command(
         OUTPUT ${output_name}.so
@@ -59,19 +67,19 @@ function(compile_onnx_network input_file output_name extra_args)
 endfunction()
 
 # Compile the ONNX networks
-#compile_onnx_network(${CMAKE_SOURCE_DIR}/../iter_140215_epoch_4_step_15999.onnx iter_140215_epoch_4_step_15999 "")
+compile_onnx_network(${CMAKE_SOURCE_DIR}/../iter_140215_epoch_4_step_15999.onnx iter_140215_epoch_4_step_15999 "")
 
 # Define custom targets that depend on the generated files
-#add_custom_target(iter_140215_epoch_4_step_15999_compile ALL
-#    DEPENDS ${CMAKE_BINARY_DIR}/iter_140215_epoch_4_step_15999.so ${CMAKE_BINARY_DIR}/iter_140215_epoch_4_step_15999.json ${CMAKE_BINARY_DIR}/iter_140215_epoch_4_step_15999.params
-#)
+add_custom_target(iter_140215_epoch_4_step_15999_compile ALL
+    DEPENDS ${CMAKE_BINARY_DIR}/iter_140215_epoch_4_step_15999.so ${CMAKE_BINARY_DIR}/iter_140215_epoch_4_step_15999.json ${CMAKE_BINARY_DIR}/iter_140215_epoch_4_step_15999.params
+)
 
 ## Build & Link
 add_executable(deploy_onnx_rt main.cpp)
-#add_dependencies(deploy_onnx_rt iter_140215_epoch_4_step_15999_compile)
+add_dependencies(deploy_onnx_rt iter_140215_epoch_4_step_15999_compile)
 
 target_link_directories(deploy_onnx_rt PRIVATE ${TVM_BUILD_DIR})
-target_link_libraries(deploy_onnx_rt PRIVATE onnxruntime ${TORCH_LIBRARIES} ${OpenCV_LIBS} opencv_imgcodecs tvm tvm_runtime)
+target_link_libraries(deploy_onnx_rt PRIVATE onnxruntime ${TORCH_LIBRARIES} ${OpenCV_LIBS} opencv_imgcodecs tvm tvm_runtime TVMCppHelper)
 
 
 target_include_directories(deploy_onnx_rt PRIVATE

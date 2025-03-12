@@ -26,12 +26,8 @@ DESC:   C++ Deployment of SceneSeg Network
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/dnn.hpp>
 
-#include <tvm/runtime/packed_func.h>
-#include <tvm/runtime/registry.h>
-#include <tvm/runtime/device_api.h>
-#include <tvm/runtime/ndarray.h>
-#include <tvm/runtime/module.h>
-#include <dmlc/memory_io.h>
+#include "tvm-cpp-helper.hpp"
+#include "cl-helper.hpp"
 
 using namespace cv; 
 using namespace std; 
@@ -59,72 +55,6 @@ std::string print_tensor_shape(const std::vector<std::int64_t>& vTensorShape)
     stream << vTensorShape[vTensorShape.size() - 1];
     
     return stream.str();
-}
-
-// Function to load the network model, graph, and params
-static Module LoadNetwork(const std::string& lib_path, const std::string& json_file, const std::string& params_file,
-    DLDevice tvm_device) {
-    // Load the compiled TVM library
-    Module lib = Module::LoadFromFile(lib_path);
-
-    // Load computational graph (.json)
-    std::ifstream loaded_json(json_file, std::ios::in);
-    std::string json_data((std::istreambuf_iterator<char>(loaded_json)), std::istreambuf_iterator<char>());
-    loaded_json.close();
-
-    // Load params from file
-    std::ifstream loaded_params(params_file, std::ios::binary);
-    std::string params_data((std::istreambuf_iterator<char>(loaded_params)), std::istreambuf_iterator<char>());
-    loaded_params.close();
-    TVMByteArray params_arr;
-    params_arr.data = params_data.c_str();
-    params_arr.size = params_data.length();
-
-    // Get the Graph Executor
-    int device_type = tvm_device.device_type;
-    const PackedFunc *graph_executor_create = Registry::Get("tvm.graph_executor.create");
-    Module graph_module = (*graph_executor_create)(json_data, lib, device_type, tvm_device.device_id);
-
-    // Load params into the Graph Executor
-    PackedFunc load_params = graph_module.GetFunction("load_params");
-    load_params(params_arr);
-
-    // Count number of params
-    int num_params = 0;
-    dmlc::MemoryStringStream strm_obj(const_cast<std::string*>(&params_data));
-    dmlc::Stream *strm = &strm_obj;
-    uint64_t header, reserved;
-    ICHECK(strm->Read(&header)) << "Invalid parameters file format";
-    ICHECK(strm->Read(&reserved)) << "Invalid parameters file format";
-    std::vector<std::string> p_names;
-    ICHECK(strm->Read(&p_names)) << "Invalid parameters file format";
-    num_params = p_names.size();
-    std::cout << "Loaded " << num_params << " parameters\n";
-
-    return graph_module;
-}
-
-// Function to run the model and return the output NDArray
-std::vector<tvm::runtime::NDArray> RunNetwork(const std::string& net_name, Module& graph_module,
-                        const std::string& input_name, NDArray& input_array) {
-    // Set input
-    graph_module.GetFunction("set_input")(input_name, input_array);
-
-    // Run the model
-    graph_module.GetFunction("run")();
-
-    // Detect the number of outputs
-    int num_outputs = graph_module.GetFunction("get_num_outputs")();
-
-    // Collect all outputs
-    tvm::runtime::PackedFunc get_output = graph_module.GetFunction("get_output");
-    std::vector<tvm::runtime::NDArray> outputs;
-    for (int i = 0; i < num_outputs; ++i) {
-        outputs.push_back(get_output(i));
-    }
-
-    // Get the output
-    return outputs;
 }
 
 /*
@@ -189,6 +119,10 @@ int main(int argc, ORTCHAR_T* argv[])
 
     // Create ONNX Session
     Ort::Session session = Ort::Session(env, model_file.c_str(), session_options);
+
+    // Load the TVM Network
+    DLDevice tvm_device {kDLOpenCL, 0};
+    Module sceneseg = TVMHelper::LoadNetwork("./iter_140215_epoch_4_step_15999.so", "./iter_140215_epoch_4_step_15999.json", "./iter_140215_epoch_4_step_15999.params", tvm_device);
 
     // Input Shape Information
     Ort::AllocatorWithDefaultOptions allocator;
@@ -318,39 +252,33 @@ int main(int argc, ORTCHAR_T* argv[])
     * ONNX RT to run the network
     ************************************************************
     */
- 
-    try 
-    {
-        input_tensors.emplace_back(Ort::Value::CreateTensor<float>(memory_info, (float*)fPhysicallyPermutedInputArray, tensor_image.numel(), input_node_dims[0].data(), input_node_dims[0].size()));
-    }
-    catch (Ort::Exception &oe) 
-    {
-        std::cout << "INFO: ONNX exception caught: " << oe.what() << ". Code: " << oe.GetOrtErrorCode() << ".\n";
-        return -1;
-    }
+    
+    // Create an NDArray for the input tensor
+    DLDataType dtype = {kDLFloat, 32, 1}; // The inputs are float
+    auto input_tensor = tvm::runtime::NDArray::Empty(input_shape, dtype, {kDLCPU, 0});
+    input_tensor.CopyFromBytes(fPhysicallyPermutedInputArray, sizeof(fPhysicallyPermutedInputArray));
 
-    // double-check the dimensions of the input tensor
-    assert(input_tensors[0].IsTensor() && input_tensors[0].GetTensorTypeAndShapeInfo().GetShape() == input_shape);
-    std::cout << "INFO: Input_tensor shape: " << endl << "      - " << print_tensor_shape(input_tensors[0].GetTensorTypeAndShapeInfo().GetShape()) << std::endl << std::endl;
-
-    // pass data through model
-    std::vector<const char*> input_names_char(input_names.size(), nullptr);
-    std::transform(std::begin(input_names), std::end(input_names), std::begin(input_names_char),
-                    [&](const std::string& str) { return str.c_str(); });
-
-    std::vector<const char*> output_names_char(output_names.size(), nullptr);
-    std::transform(std::begin(output_names), std::end(output_names), std::begin(output_names_char),
-                    [&](const std::string& str) { return str.c_str(); });
+    std::cout << "INFO: Input_tensor shape: " << endl << "      - " << print_tensor_shape(input_shape) << std::endl << std::endl;
 
     std::cout << "INFO: Running model:" << std::endl;
 
-    auto output_tensors = session.Run(Ort::RunOptions{nullptr}, input_names_char.data(), input_tensors.data(),
-                                    input_names_char.size(), output_names_char.data(), output_names_char.size());
+    // Get the start time
+    auto start = std::chrono::high_resolution_clock::now();
 
-    std::cout << "INFO: Done." << std::endl;
+    auto output_tensors = TVMHelper::RunNetwork(input_names[0], sceneseg, output_names[0], input_tensor);
 
-     // Get pointer to output tensor float values
-    float* floatarr = output_tensors.front().GetTensorMutableData<float>();
+    // Get pointer to output tensor float values
+    tvm::runtime::NDArray cpu_array = TVMHelper::CopyNDArrayToCPU(output_tensors[0]);
+
+    size_t size = 0;
+    float* floatarr = (float*) TVMHelper::GetNDArrayData(cpu_array, size);
+
+    // Get the end time
+    auto end = std::chrono::high_resolution_clock::now();
+
+    // Output the duration in seconds
+    std::chrono::duration<double> duration = end - start;
+    std::cout << "INFO: Done. Time Taken: \t" << std::fixed << std::setprecision(5) << duration.count() << " seconds" << std::endl;
 
     // Copy ONNX Runtime Output Tensor Data to libTorch Tensor
     at::Tensor prediction = torch::from_blob(floatarr, { 1, 3, img.rows, img.cols}, at::kFloat);
