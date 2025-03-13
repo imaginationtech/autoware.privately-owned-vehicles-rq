@@ -20,7 +20,7 @@ option(ONNXRUNTIME_ROOTDIR "onnxruntime root dir")
 set(CMAKE_CXX_STANDARD 17)
 
 if(NOT ONNXRUNTIME_ROOTDIR)
-    message(STATUS "You must provide an onnx runtime root directory!")
+    message(FATAL_ERROR "You must provide an onnx runtime root directory!")
 endif()
 
 # The ORT package has a different include directory structure to a local install via cmake.
