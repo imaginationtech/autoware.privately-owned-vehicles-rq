@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image
 from argparse import ArgumentParser
 sys.path.append('..')
-from inference.scene_seg_infer import SceneSegNetworkInfer
+from inference.scene_seg_infer_powervr import SceneSegNetworkInfer
 
 
 def make_visualization(prediction):

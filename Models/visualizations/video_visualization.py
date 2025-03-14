@@ -7,7 +7,8 @@ import numpy as np
 from PIL import Image
 from argparse import ArgumentParser
 sys.path.append('..')
-from inference.scene_seg_infer import SceneSegNetworkInfer
+from inference.scene_seg_infer_powervr import SceneSegNetworkInfer
+import tqdm
 
 
 def make_visualization(prediction):
@@ -66,7 +67,8 @@ def main():
   alpha = 0.5
   
   # Read until video is completed
-  while(cap.isOpened()):
+  length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+  for i in tqdm.tqdm(range(length)):
     # Capture frame-by-frame
     ret, frame = cap.read()
     if ret == True:
