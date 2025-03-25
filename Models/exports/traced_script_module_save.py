@@ -4,6 +4,9 @@ import torchvision
 from torch.export import export
 from torchvision import transforms
 
+import fx_parser
+import calculate_ops_stats
+
 import cv2
 import sys
 import numpy as np
@@ -31,6 +34,7 @@ def main():
     parser.add_argument("-i", "--input_image_filepath", dest="input_image_filepath", help="path to input image which will be processed by SceneSeg")
     parser.add_argument("-o1", "--output_pt_trace_filepath", dest="output_pt_trace_filepath", help="path to *.pt output trace file generated")
     parser.add_argument("-o2", "--output_onnx_trace_filepath", dest="output_onnx_trace_filepath", help="path to *.onnx output trace file generated")
+    parser.add_argument("-o3", "--output_layers_csv_filepath", dest="output_layers_csv_filepath", help="path to *.csv layers file generated")
     args = parser.parse_args() 
 
     # Saved model checkpoint path
@@ -73,6 +77,15 @@ def main():
     image_tensor = image_loader(image_pil)
     image_tensor = image_tensor.unsqueeze(0)
     image_tensor = image_tensor.to(device)
+
+    # Parse it through the fx parser.
+    coverage, unparsed_nodes, _ = fx_parser.parse_model(model, input_shape=image_tensor.shape, output_file=args.output_layers_csv_filepath)
+
+    # Coverage tells us the percentage of nodes in the graph being parsed correctly,
+    # while unparsed nodes gives us a list of nodes traced as unrecognised.
+    print(f"Nodes covered: {coverage * 100}")
+    print(f"unparsed nodes: {unparsed_nodes}")
+    print("INFO: FX Parser Trace CSV file generated successfully.")
 
     # Torch Export
     # Run and Trace the model with input image
